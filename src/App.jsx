@@ -1,16 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-// --- GAME DATA: WORD LISTS ---
-// INSTRUCTIONS: Add the names of your PNG files here (without .png).
-// The game will automatically look for them in the /public/datasets/ folders.
-const WORD_BANKS = {
-    1: ["the", "in", "can", "of", "it", "to", "in", "that", "was"], // Brief forms
-    2: ["go", "he", "good", "put", "be", "are", "have", "will"], // Common words
-    3: ["time", "day", "come", "take", "make", "know", "like"], 
-    4: ["receive", "payment", "attention", "business", "gentlemen"], // Complex
-    5: ["i will not", "it is not", "i have not", "there is not", "i can not"] // Phrases (will look in phrases folder)
-};
-
 // --- COMPONENTS ---
 
 const GameHUD = ({ level, score, lives, mode }) => (
@@ -40,102 +29,83 @@ const DrawingCanvas = ({ imageSrc, onSuccess }) => {
     const [targetPixels, setTargetPixels] = useState([]); 
     const [touchedPixels, setTouchedPixels] = useState(new Set()); 
     const [isFading, setIsFading] = useState(false);
-    const [imgError, setImgError] = useState(false); 
-    const CANVAS_SIZE = 500; 
+    const [imgError, setImgError] = useState(false);
+    
+    // INCREASED CANVAS SIZE
+    const CANVAS_SIZE = 600; 
 
-    // Reset error when image changes
-    useEffect(() => {
-        setImgError(false);
-    }, [imageSrc]);
+    useEffect(() => { setImgError(false); }, [imageSrc]);
 
-    // 1. Analyze the PNG when it loads
     useEffect(() => {
         if (!imageSrc || imgError) return;
-
         const img = new Image();
         img.src = imageSrc;
         img.crossOrigin = "Anonymous";
-        
         img.onload = () => {
             const canvas = document.createElement('canvas');
             canvas.width = CANVAS_SIZE;
             canvas.height = CANVAS_SIZE;
             const ctx = canvas.getContext('2d');
             
-            // Draw image to hidden canvas to read pixels
-            ctx.drawImage(img, 50, 50, CANVAS_SIZE - 100, CANVAS_SIZE - 100); 
+            // --- SCALING LOGIC ---
+            // Draw image smaller and centered (e.g., 50% size)
+            // This makes it easier to trace and looks less pixelated if the source is small.
+            const scale = 0.6; // 60% of canvas size
+            const imgWidth = CANVAS_SIZE * scale;
+            const imgHeight = CANVAS_SIZE * scale;
+            const offsetX = (CANVAS_SIZE - imgWidth) / 2;
+            const offsetY = (CANVAS_SIZE - imgHeight) / 2;
+
+            ctx.drawImage(img, offsetX, offsetY, imgWidth, imgHeight); 
             
             const imageData = ctx.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
             const data = imageData.data;
             const targets = [];
-
-            // Scan for strokes (Looking for non-transparent pixels)
+            
+            // Scan for non-transparent pixels
             for(let i = 0; i < data.length; i += 4) {
-                const alpha = data[i+3];
-                // Threshold: If pixel is not transparent, it's part of the line
-                if (alpha > 50) {
-                    targets.push(i / 4); 
-                }
+                if (data[i+3] > 50) targets.push(i / 4); 
             }
             setTargetPixels(targets);
-            clearVisibleCanvas();
+            
+            const mainCanvas = canvasRef.current;
+            if(mainCanvas) mainCanvas.getContext('2d').clearRect(0,0, CANVAS_SIZE, CANVAS_SIZE);
+            setTouchedPixels(new Set());
+            setIsFading(false);
         };
-
-        img.onerror = () => {
-            console.error("FAILED TO LOAD IMAGE:", imageSrc);
-            setImgError(true);
-        }
+        img.onerror = () => { console.error("Error loading:", imageSrc); setImgError(true); }
     }, [imageSrc, imgError]);
-
-    const clearVisibleCanvas = () => {
-        const mainCanvas = canvasRef.current;
-        if(mainCanvas) {
-            const mainCtx = mainCanvas.getContext('2d');
-            mainCtx.clearRect(0,0, CANVAS_SIZE, CANVAS_SIZE);
-        }
-        setTouchedPixels(new Set());
-        setIsFading(false);
-    };
 
     const getCoords = (e) => {
         const canvas = canvasRef.current;
         const rect = canvas.getBoundingClientRect();
         const clientX = e.touches ? e.touches[0].clientX : e.clientX;
         const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
         return {
-            x: (clientX - rect.left) * scaleX,
-            y: (clientY - rect.top) * scaleY
+            x: (clientX - rect.left) * (canvas.width / rect.width),
+            y: (clientY - rect.top) * (canvas.height / rect.height)
         };
     };
 
     const draw = (e) => {
-        if (isFading) return; 
-        if (e.buttons !== 1 && e.type !== 'touchmove') return;
+        if (isFading || (e.buttons !== 1 && e.type !== 'touchmove')) return;
         e.preventDefault();
-        
         const { x, y } = getCoords(e);
         const ctx = canvasRef.current.getContext('2d');
-        
         ctx.beginPath();
-        ctx.arc(x, y, 15, 0, Math.PI * 2); 
-        ctx.fillStyle = "rgba(0, 255, 170, 0.5)"; 
+        
+        // Brush size
+        ctx.arc(x, y, 12, 0, Math.PI * 2); 
+        ctx.fillStyle = "rgba(0, 255, 170, 0.6)"; 
         ctx.fill();
 
-        // Hit detection
-        const width = CANVAS_SIZE;
-        const pixelIndex = Math.floor(y) * width + Math.floor(x);
+        const pixelIndex = Math.floor(y) * CANVAS_SIZE + Math.floor(x);
         
-        // Check neighborhood for target pixels
-        const hitRange = 1000; 
+        // Hit detection range (larger for smaller image targets)
+        const hitRange = 1500; 
         for (let i = pixelIndex - hitRange; i < pixelIndex + hitRange; i++) {
             if (targetPixels.includes(i)) { 
-                setTouchedPixels(prev => {
-                    const next = new Set(prev);
-                    next.add(i);
-                    return next;
-                });
+                setTouchedPixels(prev => { const n = new Set(prev); n.add(i); return n; });
             }
         }
     };
@@ -143,90 +113,80 @@ const DrawingCanvas = ({ imageSrc, onSuccess }) => {
     const endDraw = () => {
         if (targetPixels.length === 0 || isFading) return;
         
-        // Verification Logic:
-        const coverage = touchedPixels.size / targetPixels.length;
-        
-        // Lowered threshold to 15% to be more forgiving
-        if (coverage > 0.15) { 
+        // Coverage threshold
+        if ((touchedPixels.size / targetPixels.length) > 0.15) { 
             onSuccess();
-        } else {
-            // Fail Condition: Fade out after 1 second if attempted
-            if (touchedPixels.size > 0) {
+        } else if (touchedPixels.size > 0) {
+            setTimeout(() => {
+                setIsFading(true); 
                 setTimeout(() => {
-                    setIsFading(true); 
-                    setTimeout(() => {
-                        clearVisibleCanvas();
-                    }, 500); 
-                }, 1000); 
-            }
+                    const mainCanvas = canvasRef.current;
+                    if(mainCanvas) mainCanvas.getContext('2d').clearRect(0,0, CANVAS_SIZE, CANVAS_SIZE);
+                    setTouchedPixels(new Set());
+                    setIsFading(false);
+                }, 500); 
+            }, 1000); 
         }
     };
 
     return (
-        <div className="canvas-wrapper">
+        <div className="canvas-wrapper" style={{width: 400, height: 400}}>
             {imgError ? (
                 <div style={{color: 'red', textAlign: 'center', marginTop: '150px'}}>
                     <b>IMAGE NOT FOUND</b><br/>
                     <small style={{fontSize:'0.6rem'}}>{imageSrc}</small>
                 </div>
             ) : (
+                // Use inline style to force the image to be smaller and centered visually
+                // to match the hitbox logic above (60% scale)
                 <img 
                     src={imageSrc} 
-                    alt="Trace Guide" 
-                    className="trace-image"
-                    draggable="false"
+                    className="trace-image" 
+                    draggable="false" 
                     onError={() => setImgError(true)}
+                    style={{
+                        width: '60%', 
+                        height: '60%', 
+                        objectFit: 'contain'
+                    }}
                 />
             )}
-            
-            <canvas 
-                ref={canvasRef}
-                width={CANVAS_SIZE}
-                height={CANVAS_SIZE}
-                className={`magic-canvas ${isFading ? 'fading' : ''}`}
-                onMouseDown={draw}
-                onMouseMove={draw}
-                onMouseUp={endDraw}
-                onTouchMove={draw}
-                onTouchEnd={endDraw}
+            <canvas ref={canvasRef} width={CANVAS_SIZE} height={CANVAS_SIZE} className={`magic-canvas ${isFading ? 'fading' : ''}`}
+                onMouseDown={draw} onMouseMove={draw} onMouseUp={endDraw} onTouchMove={draw} onTouchEnd={endDraw}
             />
         </div>
     );
 };
 
 // --- GAMEPLAY SCREEN ---
-const GameScreen = ({ level, setLevel, onGameOver, onWin, mode, onExit }) => {
+const GameScreen = ({ level, setLevel, onGameOver, onWin, mode, onExit, fullWordList }) => {
     const [currentWordObj, setCurrentWordObj] = useState(null);
     const [score, setScore] = useState(0);
     const [lives, setLives] = useState(3);
     const [enemyState, setEnemyState] = useState('idle');
     
-    // Updated Spawner: Generates path dynamically from word list
+    // UPDATED SPAWNER: Uses the exact path from the JSON file
     const spawnWord = () => {
-        // 1. Get word list for current level (or fallback to level 1)
-        const wordList = WORD_BANKS[level] || WORD_BANKS[1];
-        
-        // 2. Pick a random word
-        const randomWord = wordList[Math.floor(Math.random() * wordList.length)];
-        
-        // 3. Construct filename (replace spaces with underscores for phrases)
-        const filename = randomWord.replace(/ /g, "_") + ".png";
-        
-        // 4. Determine folder based on level (Phrases are usually Level 5 in this logic)
-        // Adjust this logic if your phrases start earlier
-        const folder = level >= 5 ? "gregg-preanniversary-phrases" : "gregg-preanniversary-words";
-        
-        const newWordObj = {
-            word: randomWord,
-            imageSrc: `/datasets/images/${folder}/train/${filename}`,
-            hint: "Trace the Outline"
-        };
+        if (!fullWordList.words || fullWordList.words.length === 0) return;
 
-        setCurrentWordObj(newWordObj);
-        setEnemyState('idle');
+        let category = "words";
+        if (level >= 5) category = "phrases";
+
+        const list = fullWordList[category];
+        const randomItem = list[Math.floor(Math.random() * list.length)];
+        
+        if (randomItem) {
+            setCurrentWordObj({
+                word: randomItem.word,
+                imageSrc: randomItem.path, 
+                hint: category === "words" ? "Word Glyph" : "Phrase Glyph"
+            });
+            setEnemyState('idle');
+        }
     };
 
-    useEffect(() => { spawnWord(); }, [level]);
+    // Initial Spawn
+    useEffect(() => { spawnWord(); }, [level, fullWordList]);
 
     const handleSuccess = () => {
         if(enemyState === 'hit') return; 
@@ -241,6 +201,8 @@ const GameScreen = ({ level, setLevel, onGameOver, onWin, mode, onExit }) => {
             }
         }, 600);
     };
+
+    if (!fullWordList.words || fullWordList.words.length === 0) return <div className="loading-text">Loading Grimoire...</div>;
 
     return (
         <section className="screen game-screen fade-in">
@@ -258,10 +220,7 @@ const GameScreen = ({ level, setLevel, onGameOver, onWin, mode, onExit }) => {
                     </div>
                     <div className="drawing-area">
                         {currentWordObj && (
-                            <DrawingCanvas 
-                                imageSrc={currentWordObj.imageSrc} 
-                                onSuccess={handleSuccess}
-                            />
+                            <DrawingCanvas imageSrc={currentWordObj.imageSrc} onSuccess={handleSuccess} />
                         )}
                         <p className="glyph-hint">{currentWordObj?.hint}</p>
                     </div>
@@ -355,6 +314,18 @@ export default function App() {
     const [screen, setScreen] = useState('login');
     const [level, setLevel] = useState(1);
     const [gameMode, setGameMode] = useState('campaign');
+    
+    const [fullWordList, setFullWordList] = useState({ words: [], phrases: [] });
+
+    useEffect(() => {
+        fetch('/game_data.json')
+            .then(res => res.json())
+            .then(data => {
+                console.log("Grimoire Loaded:", data.words.length, "words found.");
+                setFullWordList(data);
+            })
+            .catch(err => console.error("Failed to load Grimoire Index. Run 'node scan_images.js' first!", err));
+    }, []);
 
     const startGame = (mode) => {
         setGameMode(mode);
@@ -368,7 +339,17 @@ export default function App() {
             <div className="app-container">
                 {screen === 'login' && <LoginScreen onLogin={() => setScreen('menu')} />}
                 {screen === 'menu' && <MainMenu onStart={() => startGame('campaign')} onPractice={() => startGame('practice')} onSettings={() => setScreen('settings')} onLogout={() => setScreen('login')} />}
-                {screen === 'game' && <GameScreen level={level} setLevel={setLevel} mode={gameMode} onGameOver={() => setScreen('menu')} onWin={() => setScreen('menu')} onExit={() => setScreen('menu')} />}
+                {screen === 'game' && (
+                    <GameScreen 
+                        level={level} 
+                        setLevel={setLevel} 
+                        mode={gameMode} 
+                        onGameOver={() => setScreen('menu')} 
+                        onWin={() => setScreen('menu')} 
+                        onExit={() => setScreen('menu')}
+                        fullWordList={fullWordList}
+                    />
+                )}
                 {screen === 'settings' && <SettingsScreen goBack={() => setScreen('menu')} />}
             </div>
         </div>

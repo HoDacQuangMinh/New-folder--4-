@@ -17,8 +17,6 @@ const gameData = {
 };
 
 // --- RECURSIVE SCANNER FUNCTION ---
-// This function looks inside a folder. If it finds a file, it adds it.
-// If it finds another folder, it dives inside that too.
 function getFilesRecursively(dir) {
     let results = [];
     if (!fs.existsSync(dir)) return results;
@@ -30,21 +28,17 @@ function getFilesRecursively(dir) {
         const stat = fs.statSync(fullPath);
         
         if (stat && stat.isDirectory()) {
-            // Dive into subfolder
             results = results.concat(getFilesRecursively(fullPath));
         } else {
-            // Check if it is a PNG
             if (file.toLowerCase().endsWith('.png')) {
-                // Store just the filename (without extension) for the game logic
-                // The game logic currently reconstructs paths, which might be tricky if files are deep.
-                // STRATEGY CHANGE: Let's store the RELATIVE PATH from 'public' so the game doesn't have to guess.
+                // FIXED LOGIC: Create a clean web-friendly path
+                // 1. Get the path relative to the 'public' folder
+                // This converts "C:\Users\...\public\datasets\..." into "datasets\..."
+                let relativePath = path.relative(path.join(__dirname, 'public'), fullPath);
                 
-                // Get path relative to 'public' folder
-                // e.g., "datasets/images/gregg.../train/word.png"
-                const relativePath = fullPath.split('public')[1].replace(/\\/g, '/'); // Normalize slashes
+                // 2. Ensure we use forward slashes (/) for web URLs, even on Windows
+                relativePath = '/' + relativePath.replace(/\\/g, '/');
                 
-                // We store an object with both the cleaned word name and the full path
-                // This guarantees the game can load it.
                 const cleanName = file.replace('.png', '').replace(/_/g, ' ');
                 
                 results.push({
@@ -63,8 +57,6 @@ console.log("🔍 Scanning recursively for Shorthand Runes...");
 // 1. Scan Words
 const wordsPath = path.join(IMAGES_DIR, DATASETS.words);
 const foundWords = getFilesRecursively(wordsPath);
-// Map back to just names if you want simple list, OR keep objects.
-// Let's modify the APP to handle objects so we never have path errors again.
 gameData.words = foundWords; 
 console.log(`✅ Found ${foundWords.length} Words in ${wordsPath}`);
 
